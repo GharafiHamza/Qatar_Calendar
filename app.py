@@ -136,6 +136,28 @@ def load_constellations_data(base_dir: str) -> Dict[str, gpd.GeoDataFrame]:
             gdf["constellation"] = name
             # Normalise column names by stripping whitespace
             gdf.columns = [c.strip() for c in gdf.columns]
+            # Try to create unified satellite ('sat') and sensor ('sensor') columns to
+            # simplify downstream processing.  Use the infer_column_name helper to
+            # locate the original columns and copy their values into new fields.
+            try:
+                sat_orig = infer_column_name(gdf.columns.tolist(), [
+                    "satellite", "satelliteid", "satellite_id", "sat_id", "sat",
+                    "platform", "spacecraft"
+                ])
+                sensor_orig = infer_column_name(gdf.columns.tolist(), [
+                    "sensor", "instrument", "payload", "sensor_id", "mode"
+                ])
+            except Exception:
+                sat_orig = None
+                sensor_orig = None
+            if sat_orig and sat_orig not in gdf.columns:
+                sat_orig = None
+            if sensor_orig and sensor_orig not in gdf.columns:
+                sensor_orig = None
+            if sat_orig:
+                gdf["sat"] = gdf[sat_orig]
+            if sensor_orig:
+                gdf["sensor"] = gdf[sensor_orig]
             gdfs.append(gdf)
         if gdfs:
             const_data[name] = pd.concat(gdfs, ignore_index=True)
@@ -210,16 +232,36 @@ def build_map_layers(selected_gdf: gpd.GeoDataFrame, aoi: Optional[gpd.GeoDataFr
         return layers
     # Create a layer for the swaths
     if not selected_gdf.empty:
-        # Convert GeoDataFrame to GeoJSON-like structures
-        # Use mapping() to produce a dict representation of each geometry
-        geojson_list = [
-            {
-                "type": "Feature",
-                "properties": row.drop(labels="geometry").to_dict(),
-                "geometry": mapping(row.geometry) if hasattr(row, "geometry") else None,
-            }
-            for _, row in selected_gdf.iterrows()
-        ]
+        # Convert GeoDataFrame to a list of GeoJSON features.  Each geometry
+        # is flattened so that MultiPolygons are broken into individual polygon
+        # features.  The swath properties are attached to each frame so that
+        # the table remains swath‑centric while the map displays individual
+        # footprints.
+        geojson_list: List[Dict[str, object]] = []
+        for _, row in selected_gdf.iterrows():
+            props = row.drop(labels="geometry").to_dict()
+            geom = row.geometry
+            if geom is None:
+                continue
+            try:
+                geom_type = geom.geom_type
+            except Exception:
+                geom_type = None
+            # Flatten MultiPolygons into separate polygons
+            if geom_type == "MultiPolygon":
+                # type: ignore[attr-defined] — geoms attribute is present for MultiPolygon
+                for poly in geom.geoms:  # type: ignore[attr-defined]
+                    geojson_list.append({
+                        "type": "Feature",
+                        "properties": props,
+                        "geometry": mapping(poly),
+                    })
+            else:
+                geojson_list.append({
+                    "type": "Feature",
+                    "properties": props,
+                    "geometry": mapping(geom),
+                })
         swath_layer = pdk.Layer(
             "GeoJsonLayer",
             data=geojson_list,
@@ -292,20 +334,10 @@ def main() -> None:
 
     for const, gdf in const_data.items():
         with st.sidebar.expander(const, expanded=False):
-            # Determine candidate columns for satellites and sensors.  Use a
-            # broader set of keywords to increase the chance of finding the
-            # correct column.
-            columns = list(gdf.columns)
-            sat_col = infer_column_name(columns, [
-                "satellite", "satelliteid", "satellite_id", "sat_id", "sat",
-                "platform", "spacecraft"
-            ])
-            sensor_col = infer_column_name(columns, [
-                "sensor", "instrument", "payload", "sensor_id", "mode"
-            ])
-            # Unique values for satellites and sensors
-            sats: List[str] = sorted(gdf[sat_col].dropna().unique().tolist()) if sat_col else []
-            sensors: List[str] = sorted(gdf[sensor_col].dropna().unique().tolist()) if sensor_col else []
+            # Pull the unified 'sat' and 'sensor' columns created when loading the
+            # constellation data.  Fallback to empty lists if columns are not present.
+            sat_values: List[str] = sorted(gdf["sat"].dropna().unique().tolist()) if "sat" in gdf.columns else []
+            sensor_values: List[str] = sorted(gdf["sensor"].dropna().unique().tolist()) if "sensor" in gdf.columns else []
             # Provide a top‑level check box to quickly select everything for this constellation.
             select_all = st.checkbox(
                 f"Select all {const}", value=False, key=f"{const}_all"
@@ -313,27 +345,22 @@ def main() -> None:
             # Render a checkbox for each satellite.  If the top‑level select_all is
             # checked the default for each satellite will be True.
             selected_sats: List[str] = []
-            if sats:
+            if sat_values:
                 st.markdown("**Satellites**")
-                for i, sat in enumerate(sats):
-                    # Use index as part of the key to avoid invalid characters in names
+                for i, sat in enumerate(sat_values):
                     sat_key = f"{const}_sat_{i}"
-                    checked = st.checkbox(
-                        sat, value=select_all, key=sat_key
-                    )
+                    checked = st.checkbox(sat, value=select_all, key=sat_key)
                     if checked:
                         selected_sats.append(sat)
             # Render a checkbox for each sensor.  Use the same select_all default.
             selected_sensors: List[str] = []
-            if sensors:
+            if sensor_values:
                 st.markdown("**Sensors**")
-                for j, sensor in enumerate(sensors):
+                for j, sens in enumerate(sensor_values):
                     sens_key = f"{const}_sens_{j}"
-                    checked = st.checkbox(
-                        sensor, value=select_all, key=sens_key
-                    )
+                    checked = st.checkbox(sens, value=select_all, key=sens_key)
                     if checked:
-                        selected_sensors.append(sensor)
+                        selected_sensors.append(sens)
             selection[const] = (selected_sats, selected_sensors)
 
     # Date picker for acquisition dates
@@ -360,42 +387,26 @@ def main() -> None:
             gdf = const_data.get(const)
             if gdf is None or gdf.empty:
                 continue
-            # If the user did not select any satellites or sensors for this constellation,
-            # skip it entirely.  This prevents all data from the constellation being
-            # included when no boxes are checked.
+            # If neither satellites nor sensors were selected, skip this constellation.
             if not sat_list and not sens_list:
                 continue
-            # Copy to avoid modifying the original
             df = gdf.copy()
-            # Identify satellite and sensor columns using a broader set of keywords
-            sat_col = infer_column_name(list(df.columns), [
-                "satellite", "satelliteid", "satellite_id", "sat_id", "sat",
-                "platform", "spacecraft"
-            ])
-            sensor_col = infer_column_name(list(df.columns), [
-                "sensor", "instrument", "payload", "sensor_id", "mode"
-            ])
-            # Apply satellite filter if satellites were selected
-            if sat_col and sat_list:
-                df = df[df[sat_col].isin(sat_list)]
-            # Apply sensor filter if sensors were selected
-            if sensor_col and sens_list:
-                df = df[df[sensor_col].isin(sens_list)]
-            # If the filter removed all rows, skip further processing
+            # Filter by unified 'sat' and 'sensor' columns if they exist
+            if sat_list and "sat" in df.columns:
+                df = df[df["sat"].isin(sat_list)]
+            if sens_list and "sensor" in df.columns:
+                df = df[df["sensor"].isin(sens_list)]
             if df.empty:
                 continue
             # Identify a date column by searching for keywords
             date_col = infer_column_name(list(df.columns), ["date", "start", "time", "acq"])
             if date_col:
                 dates = parse_date_column(df, date_col)
-                # Add parsed dates into the DataFrame to simplify filtering later
                 df["__acq_datetime__"] = dates
-                # Use midnight times for naive comparison (drop timezone information)
                 start_dt = pd.Timestamp(start_date)
                 end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
                 mask = (df["__acq_datetime__"] >= start_dt) & (df["__acq_datetime__"] <= end_dt)
                 df = df.loc[mask]
-            # Append to the list if there is any data left
             if not df.empty:
                 filtered_frames.append(df)
         # Combine all selected frames
@@ -406,27 +417,41 @@ def main() -> None:
 
         # Display map
         if not result_gdf.empty:
-            # Compute combined coverage of selected swaths over the AOI
+            # For the map, use only the geometries representing individual frames.  Frames are
+            # identified by the presence of an area coverage column (e.g. 'areacovere').  If
+            # such a column exists, only rows with non‑null and positive values are kept.
+            frames_gdf = result_gdf.copy()
+            area_col: Optional[str] = None
+            for col in frames_gdf.columns:
+                lc = col.lower()
+                if "area" in lc and "cover" in lc:
+                    area_col = col
+                    break
+            if area_col:
+                # Convert to numeric to compare
+                area_series = pd.to_numeric(frames_gdf[area_col], errors="coerce")
+                frames_gdf = frames_gdf[area_series.notna() & (area_series > 0)]
+                frames_gdf = frames_gdf.copy()
+            # Compute combined coverage of selected swaths over the AOI using frames_gdf
             coverage_message = ""
-            if aoi is not None and not aoi.empty:
+            if aoi is not None and not aoi.empty and not frames_gdf.empty:
                 try:
-                    # Union of all selected swaths
-                    swath_union = unary_union(result_gdf.geometry)
-                    # Intersection with AOI (union of AOI geometries)
+                    swath_union = unary_union(frames_gdf.geometry)
                     aoi_union = unary_union(aoi.geometry)
                     intersection = swath_union.intersection(aoi_union)
-                    # Compute coverage ratio (area of intersection divided by AOI area)
-                    # To compute area in square kilometres, project to a metric CRS such as EPSG:3857
                     result_area_gdf = gpd.GeoSeries([intersection], crs="EPSG:4326").to_crs("EPSG:3857")
                     aoi_area_gdf = gpd.GeoSeries([aoi_union], crs="EPSG:4326").to_crs("EPSG:3857")
-                    covered_area = result_area_gdf.area.iloc[0] / 1e6  # convert m^2 to km^2
+                    covered_area = result_area_gdf.area.iloc[0] / 1e6
                     total_area = aoi_area_gdf.area.iloc[0] / 1e6
                     coverage_percent = (covered_area / total_area) * 100 if total_area > 0 else 0
-                    coverage_message = f"Coverage of AOI: {coverage_percent:.1f}% (\ncovered {covered_area:.1f} km² out of {total_area:.1f} km²)"
+                    coverage_message = (
+                        f"Coverage of AOI: {coverage_percent:.1f}% (\ncovered "
+                        f"{covered_area:.1f} km² out of {total_area:.1f} km²)"
+                    )
                 except Exception as exc:
                     coverage_message = f"Unable to compute coverage: {exc}"
-            # Build map layers
-            layers = build_map_layers(result_gdf, aoi, show_aoi)
+            # Build map layers using frames_gdf instead of result_gdf
+            layers = build_map_layers(frames_gdf, aoi, show_aoi)
             # Determine a suitable initial view state.  If there are swaths, centre on their centroid;
             # otherwise centre on the AOI.
             if not result_gdf.empty:
