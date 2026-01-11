@@ -43,6 +43,7 @@ example for use elsewhere.
 """
 
 import os
+import base64
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -251,10 +252,30 @@ def build_map_layers(selected_gdf: gpd.GeoDataFrame, aoi: Optional[gpd.GeoDataFr
 def main() -> None:
     """Entry point for the Streamlit app."""
     st.set_page_config(page_title="Acquisition Plans Viewer", layout="wide")
+    # Display a linked logo at the top of the page.  The logo is read from the
+    # local file system and encoded as base64 so that it can be embedded in
+    # Markdown.  Clicking on the logo will navigate the user to the Arias Tech
+    # Solutions website.
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    logo_path = os.path.join(script_dir, "ats_logo.png")
+    if os.path.exists(logo_path):
+        with open(logo_path, "rb") as logo_file:
+            logo_bytes = logo_file.read()
+        logo_b64 = base64.b64encode(logo_bytes).decode("utf-8")
+        # Compose a single‑line HTML string for the linked logo.  The triple
+        # quotes allow us to embed both the anchor and image tags without
+        # introducing stray newlines into the string itself.
+        logo_html = (
+            f'<a href="https://www.ariastechsolutions.com/" target="_blank">'
+            f'<img src="data:image/png;base64,{logo_b64}" '
+            f'alt="Arias Tech Solutions Logo" style="height:80px;" /></a>'
+        )
+        st.markdown(logo_html, unsafe_allow_html=True)
+    # Page title displayed underneath the logo
     st.title("Satellite Acquisition Plans over Qatar EEZ")
 
     # Determine base directory relative to this script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # It is safe to reuse script_dir computed above.
     base_dir = script_dir
     # Path to the AOI file (Qatar EEZ)
     aoi_path = os.path.join(base_dir, "Qatar_eez.kml")
