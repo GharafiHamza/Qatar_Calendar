@@ -291,6 +291,27 @@ def build_map_layers(selected_gdf: gpd.GeoDataFrame, aoi: Optional[gpd.GeoDataFr
     return layers
 
 
+def toggle_all_constellation(const: str, keys: List[str]) -> None:
+    """Callback to toggle all satellite and sensor checkboxes for a constellation.
+
+    When the top‑level 'Select all' checkbox is toggled, this function updates
+    the Streamlit session state for each underlying checkbox key to match the
+    new state.
+
+    Parameters
+    ----------
+    const: str
+        The name of the constellation; used to find the state of the select all
+        checkbox in st.session_state.
+    keys: List[str]
+        A list of checkbox keys for satellites and sensors.
+    """
+    # Retrieve the current value of the select all checkbox
+    select_state = st.session_state.get(f"{const}_all", False)
+    for key in keys:
+        st.session_state[key] = select_state
+
+
 def main() -> None:
     """Entry point for the Streamlit app."""
     st.set_page_config(page_title="Acquisition Plans Viewer", layout="wide")
@@ -338,27 +359,37 @@ def main() -> None:
             # constellation data.  Fallback to empty lists if columns are not present.
             sat_values: List[str] = sorted(gdf["sat"].dropna().unique().tolist()) if "sat" in gdf.columns else []
             sensor_values: List[str] = sorted(gdf["sensor"].dropna().unique().tolist()) if "sensor" in gdf.columns else []
-            # Provide a top‑level check box to quickly select everything for this constellation.
-            select_all = st.checkbox(
-                f"Select all {const}", value=False, key=f"{const}_all"
+            # Precompute keys for satellites and sensors so we can pass them to the callback
+            sat_keys = [f"{const}_sat_{i}" for i in range(len(sat_values))]
+            sensor_keys = [f"{const}_sens_{j}" for j in range(len(sensor_values))]
+            # Top‑level checkbox to select/deselect all satellites and sensors.  Use
+            # on_change to update the state of all subordinate checkboxes via the
+            # toggle_all_constellation callback.
+            st.checkbox(
+                f"Select all {const}", key=f"{const}_all",
+                on_change=toggle_all_constellation, args=(const, sat_keys + sensor_keys)
             )
-            # Render a checkbox for each satellite.  If the top‑level select_all is
-            # checked the default for each satellite will be True.
             selected_sats: List[str] = []
             if sat_values:
                 st.markdown("**Satellites**")
                 for i, sat in enumerate(sat_values):
-                    sat_key = f"{const}_sat_{i}"
-                    checked = st.checkbox(sat, value=select_all, key=sat_key)
+                    sat_key = sat_keys[i]
+                    # If the checkbox state hasn't been initialised in session_state,
+                    # default to False.  The toggle_all_constellation callback will
+                    # overwrite these values when the user interacts with the select all.
+                    if sat_key not in st.session_state:
+                        st.session_state[sat_key] = False
+                    checked = st.checkbox(sat, key=sat_key)
                     if checked:
                         selected_sats.append(sat)
-            # Render a checkbox for each sensor.  Use the same select_all default.
             selected_sensors: List[str] = []
             if sensor_values:
                 st.markdown("**Sensors**")
                 for j, sens in enumerate(sensor_values):
-                    sens_key = f"{const}_sens_{j}"
-                    checked = st.checkbox(sens, value=select_all, key=sens_key)
+                    sens_key = sensor_keys[j]
+                    if sens_key not in st.session_state:
+                        st.session_state[sens_key] = False
+                    checked = st.checkbox(sens, key=sens_key)
                     if checked:
                         selected_sensors.append(sens)
             selection[const] = (selected_sats, selected_sensors)
