@@ -4,3 +4,4 @@ geopandas
 shapely
 pydeck
 pandas
+pyogrio

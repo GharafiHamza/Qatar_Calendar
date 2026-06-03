@@ -113,12 +113,24 @@ def load_constellations_data(base_dir: str) -> Dict[str, gpd.GeoDataFrame]:
     const_data: Dict[str, gpd.GeoDataFrame] = {}
     if gpd is None:
         return const_data
-    for name in sorted(os.listdir(base_dir)):
-        sub_path = os.path.join(base_dir, name)
-        if not os.path.isdir(sub_path):
+    # Walk the project tree so nested delivery folders such as qc_2/CSK_1G are
+    # loaded alongside the original constellation folders.
+    shp_by_constellation: Dict[str, List[str]] = {}
+    for root, _, files in os.walk(base_dir):
+        # Skip hidden or internal folders that should not contribute data.
+        rel_parts = os.path.relpath(root, base_dir).split(os.sep)
+        if rel_parts and rel_parts[0].startswith("."):
             continue
-        # find shapefiles in this directory
-        shp_files = [os.path.join(sub_path, f) for f in os.listdir(sub_path) if f.lower().endswith(".shp")]
+        shp_files = [os.path.join(root, f) for f in files if f.lower().endswith(".shp")]
+        if not shp_files:
+            continue
+        constellation_name = os.path.basename(root)
+        if constellation_name == os.path.basename(base_dir):
+            continue
+        shp_by_constellation.setdefault(constellation_name, []).extend(shp_files)
+
+    for name in sorted(shp_by_constellation):
+        shp_files = sorted(shp_by_constellation[name])
         gdfs: List[gpd.GeoDataFrame] = []
         for shp_path in shp_files:
             try:
@@ -444,7 +456,11 @@ def main() -> None:
         if filtered_frames:
             result_gdf = gpd.GeoDataFrame(pd.concat(filtered_frames, ignore_index=True), crs="EPSG:4326")
         else:
-            result_gdf = gpd.GeoDataFrame(columns=list(const_data[list(const_data.keys())[0]].columns))
+            fallback_columns: List[str] = ["geometry"]
+            if const_data:
+                first_constellation = next(iter(const_data.values()))
+                fallback_columns = list(first_constellation.columns)
+            result_gdf = gpd.GeoDataFrame(columns=fallback_columns, geometry="geometry", crs="EPSG:4326")
 
         # Display map
         if not result_gdf.empty:
