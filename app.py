@@ -357,9 +357,10 @@ def main() -> None:
     aoi = load_aoi(aoi_path)
     const_data = load_constellations_data(base_dir)
 
-    # Define the date limits for the application
+    # Define the date limits for the application. The dataset now spans the
+    # full year from 2026-02-01 through 2027-01-31.
     default_start = datetime(2026, 2, 1)
-    default_end = datetime(2026, 8, 31)
+    default_end = datetime(2027, 1, 31)
 
     # Sidebar for constellation selection
     st.sidebar.header("Constellations and Selection")
