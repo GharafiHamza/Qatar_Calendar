@@ -95,10 +95,10 @@ def load_aoi(aoi_path: str) -> Optional[gpd.GeoDataFrame]:
 def load_constellations_data(base_dir: str) -> Dict[str, gpd.GeoDataFrame]:
     """Load all constellations from the given base directory.
 
-    Each subdirectory within the base directory is treated as a separate
-    constellation.  All .shp files inside a constellation directory are
-    concatenated into a single GeoDataFrame.  The resulting dictionary maps
-    constellation names to their GeoDataFrames.
+    Prefer a consolidated GeoPackage named ``qatar_calendar.gpkg`` when it is
+    present. Each layer in that package is treated as a separate constellation.
+    If the GeoPackage is missing, fall back to the legacy shapefile folder
+    layout and build the same constellation mapping from those files.
 
     Parameters
     ----------
@@ -113,11 +113,56 @@ def load_constellations_data(base_dir: str) -> Dict[str, gpd.GeoDataFrame]:
     const_data: Dict[str, gpd.GeoDataFrame] = {}
     if gpd is None:
         return const_data
-    # Walk the project tree so nested delivery folders such as qc_2/CSK_1G are
-    # loaded alongside the original constellation folders.
+
+    gpkg_path = os.path.join(base_dir, "qatar_calendar.gpkg")
+    if os.path.exists(gpkg_path):
+        try:
+            layers_df = gpd.list_layers(gpkg_path)
+            layer_names = layers_df["name"].tolist() if "name" in layers_df.columns else list(layers_df)
+        except Exception as exc:
+            st.warning(f"Failed to inspect {gpkg_path}: {exc}")
+            layer_names = []
+
+        for name in sorted(layer_names):
+            try:
+                gdf = gpd.read_file(gpkg_path, layer=name, engine="pyogrio")
+            except Exception as exc:
+                st.warning(f"Failed to read layer {name} from {gpkg_path}: {exc}")
+                continue
+            try:
+                if gdf.crs and gdf.crs.to_string() not in ("epsg:4326", "EPSG:4326"):
+                    gdf = gdf.to_crs("EPSG:4326")
+            except Exception:
+                gdf.set_crs("EPSG:4326", inplace=True)
+            gdf["constellation"] = name
+            gdf.columns = [c.strip() for c in gdf.columns]
+            try:
+                sat_orig = infer_column_name(gdf.columns.tolist(), [
+                    "satellite", "satelliteid", "satellite_id", "sat_id", "sat",
+                    "platform", "spacecraft"
+                ])
+                sensor_orig = infer_column_name(gdf.columns.tolist(), [
+                    "sensor", "instrument", "payload", "sensor_id", "mode"
+                ])
+            except Exception:
+                sat_orig = None
+                sensor_orig = None
+            if sat_orig and sat_orig not in gdf.columns:
+                sat_orig = None
+            if sensor_orig and sensor_orig not in gdf.columns:
+                sensor_orig = None
+            if sat_orig:
+                gdf["sat"] = gdf[sat_orig]
+            if sensor_orig:
+                gdf["sensor"] = gdf[sensor_orig]
+            const_data[name] = gdf
+        if const_data:
+            return const_data
+
+    # Fallback: walk the project tree so nested delivery folders such as
+    # qc_2/CSK_1G are loaded alongside the original constellation folders.
     shp_by_constellation: Dict[str, List[str]] = {}
     for root, _, files in os.walk(base_dir):
-        # Skip hidden or internal folders that should not contribute data.
         rel_parts = os.path.relpath(root, base_dir).split(os.sep)
         if rel_parts and rel_parts[0].startswith("."):
             continue
