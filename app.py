@@ -756,6 +756,10 @@ def main_v2() -> None:
 
             selection[const] = (selected_sats, selected_sensors)
 
+    has_any_selection = any(
+        sat_list or sens_list for sat_list, sens_list in selection.values()
+    )
+
     st.sidebar.header("Date Range")
     start_date, end_date = st.sidebar.date_input(
         "Acquisition period",
@@ -764,16 +768,13 @@ def main_v2() -> None:
         max_value=default_end.date(),
     )
     show_aoi = st.sidebar.checkbox("Show AOI boundary", value=True)
-    apply = st.sidebar.button("Apply filters")
+    apply = st.sidebar.button("Apply filters", disabled=not has_any_selection)
 
     if apply:
         if gpd is None or unary_union is None or pdk is None:
             st.error("One or more required libraries are missing. Please install geopandas, shapely and pydeck to run this app.")
             return
 
-        has_any_selection = any(
-            sat_list or sens_list for sat_list, sens_list in selection.values()
-        )
         if not has_any_selection:
             st.warning("no satellite/sensor was selected")
             st.session_state.pop("frame_result_gdf", None)
