@@ -357,6 +357,160 @@ def build_summary_table(result_gdf: gpd.GeoDataFrame) -> pd.DataFrame:
     return table
 
 
+def inject_brand_styles() -> None:
+    """Apply a satellite-tasking visual theme using the logo palette."""
+    st.markdown(
+        """
+        <style>
+        :root {
+            --qc-bg: #05070b;
+            --qc-panel: #0b1118;
+            --qc-panel-2: #101923;
+            --qc-border: rgba(76, 209, 183, 0.22);
+            --qc-cyan: #30d5ff;
+            --qc-blue: #2c8cff;
+            --qc-green: #62d36d;
+            --qc-text: #eef6ff;
+            --qc-muted: rgba(238, 246, 255, 0.72);
+        }
+
+        .stApp {
+            background:
+                radial-gradient(circle at top left, rgba(48, 213, 255, 0.10), transparent 32%),
+                radial-gradient(circle at top right, rgba(98, 211, 109, 0.10), transparent 30%),
+                linear-gradient(180deg, #06080d 0%, #0a0f16 48%, #05070b 100%);
+            color: var(--qc-text);
+        }
+
+        [data-testid="stSidebar"] {
+            background:
+                linear-gradient(180deg, rgba(8, 13, 20, 0.98), rgba(11, 18, 28, 0.98)),
+                linear-gradient(135deg, rgba(48, 213, 255, 0.06), rgba(98, 211, 109, 0.04));
+            border-right: 1px solid rgba(48, 213, 255, 0.18);
+        }
+
+        [data-testid="stSidebar"] h1,
+        [data-testid="stSidebar"] h2,
+        [data-testid="stSidebar"] h3,
+        [data-testid="stSidebar"] p,
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] span {
+            color: var(--qc-text) !important;
+        }
+
+        h1, h2, h3 {
+            color: var(--qc-text);
+            letter-spacing: 0.01em;
+        }
+
+        h1 {
+            background: linear-gradient(90deg, var(--qc-cyan), var(--qc-blue), var(--qc-green));
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            font-weight: 800;
+        }
+
+        .block-container {
+            padding-top: 1.2rem;
+            padding-bottom: 2rem;
+        }
+
+        .qc-hero {
+            margin: 0 0 1rem 0;
+            padding: 1rem 1.1rem;
+            border: 1px solid var(--qc-border);
+            border-radius: 18px;
+            background:
+                linear-gradient(135deg, rgba(10, 16, 24, 0.88), rgba(16, 25, 35, 0.80)),
+                radial-gradient(circle at left top, rgba(48, 213, 255, 0.10), transparent 40%);
+            box-shadow: 0 16px 44px rgba(0, 0, 0, 0.35);
+        }
+
+        .qc-hero .eyebrow {
+            display: inline-block;
+            margin-bottom: 0.4rem;
+            padding: 0.25rem 0.6rem;
+            border-radius: 999px;
+            font-size: 0.76rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #06111a;
+            background: linear-gradient(90deg, var(--qc-cyan), var(--qc-green));
+            font-weight: 800;
+        }
+
+        .qc-hero .subtitle {
+            margin-top: 0.35rem;
+            color: var(--qc-muted);
+            font-size: 0.98rem;
+        }
+
+        div[data-testid="stExpander"] {
+            border: 1px solid rgba(48, 213, 255, 0.16);
+            border-radius: 16px;
+            background: linear-gradient(180deg, rgba(12, 18, 26, 0.96), rgba(9, 13, 20, 0.96));
+        }
+
+        div[data-testid="stExpander"] details summary {
+            color: var(--qc-text);
+            font-weight: 700;
+        }
+
+        button[kind="secondary"],
+        button[kind="primary"] {
+            border-radius: 999px !important;
+            border: 1px solid rgba(48, 213, 255, 0.22) !important;
+            background: linear-gradient(90deg, rgba(48, 213, 255, 0.12), rgba(98, 211, 109, 0.10)) !important;
+            color: var(--qc-text) !important;
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.02) inset;
+        }
+
+        button[kind="primary"] {
+            background: linear-gradient(90deg, var(--qc-cyan), var(--qc-blue)) !important;
+            color: #051018 !important;
+            font-weight: 800 !important;
+        }
+
+        button[kind="primary"]:disabled,
+        button[kind="secondary"]:disabled {
+            opacity: 0.45 !important;
+        }
+
+        div[data-testid="stDataFrame"],
+        div[data-testid="stDataEditor"] {
+            border: 1px solid rgba(48, 213, 255, 0.16);
+            border-radius: 16px;
+            overflow: hidden;
+            background: rgba(8, 12, 18, 0.94);
+        }
+
+        div[data-testid="stDataFrame"] table,
+        div[data-testid="stDataEditor"] table {
+            font-size: 0.92rem;
+        }
+
+        div[data-testid="stAlert"] {
+            border-radius: 14px;
+        }
+
+        .stCaption, caption {
+            color: rgba(238, 246, 255, 0.70) !important;
+        }
+
+        hr {
+            border-color: rgba(48, 213, 255, 0.12);
+        }
+
+        footer, header, #MainMenu {
+            visibility: hidden;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 @st.fragment
 def render_results_panel(result_gdf: gpd.GeoDataFrame, aoi: Optional[gpd.GeoDataFrame], show_aoi: bool) -> None:
     """Render the interactive results area without rerunning the whole page."""
@@ -803,6 +957,7 @@ def main() -> None:
 def main_v2() -> None:
     """Updated entry point with a compact editable summary table."""
     st.set_page_config(page_title="Acquisition Plans Viewer", layout="wide")
+    inject_brand_styles()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     logo_path = os.path.join(script_dir, "ats_logo.png")
@@ -817,7 +972,16 @@ def main_v2() -> None:
         )
         st.markdown(logo_html, unsafe_allow_html=True)
 
-    st.title("Satellite Acquisition Plans over Qatar EEZ")
+    st.markdown(
+        """
+        <div class="qc-hero">
+            <div class="eyebrow">Tasking Console</div>
+            <h1 style="margin:0;">Satellite Acquisition Plans over Qatar EEZ</h1>
+            <div class="subtitle">Tasking windows, sensor selection, and frame visibility controls tuned for operational review.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     base_dir = script_dir
     aoi = load_aoi(os.path.join(base_dir, "Qatar_eez.kml"))
