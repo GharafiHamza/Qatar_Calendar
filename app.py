@@ -548,16 +548,14 @@ def render_results_panel(result_gdf: gpd.GeoDataFrame, aoi: Optional[gpd.GeoData
     control_cols = st.columns(4)
     with control_cols[0]:
         if st.button("Hide selected", key="hide_selected_frames", disabled=not selected_rows):
-            for idx in selected_rows:
-                if 0 <= idx < len(visibility_state):
-                    visibility_state[idx] = False
+            selected_set = {idx for idx in selected_rows if 0 <= idx < len(visibility_state)}
+            visibility_state = [idx not in selected_set for idx in range(len(visibility_state))]
             st.session_state["frame_visibility_state"] = visibility_state
             st.rerun()
     with control_cols[1]:
         if st.button("Show selected", key="show_selected_frames", disabled=not selected_rows):
-            for idx in selected_rows:
-                if 0 <= idx < len(visibility_state):
-                    visibility_state[idx] = True
+            selected_set = {idx for idx in selected_rows if 0 <= idx < len(visibility_state)}
+            visibility_state = [idx in selected_set for idx in range(len(visibility_state))]
             st.session_state["frame_visibility_state"] = visibility_state
             st.rerun()
     with control_cols[2]:
