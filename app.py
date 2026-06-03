@@ -360,12 +360,13 @@ def build_summary_table(result_gdf: gpd.GeoDataFrame) -> pd.DataFrame:
 @st.fragment
 def render_results_panel(result_gdf: gpd.GeoDataFrame, aoi: Optional[gpd.GeoDataFrame], show_aoi: bool) -> None:
     """Render the interactive results area without rerunning the whole page."""
-    summary_df = st.session_state.get("frame_summary_df")
-    if summary_df is None:
-        summary_df = build_summary_table(result_gdf)
-        st.session_state["frame_summary_df"] = summary_df
+    visibility_state = st.session_state.get("frame_visibility_state")
+    if not isinstance(visibility_state, list) or len(visibility_state) != len(result_gdf):
+        visibility_state = [True] * len(result_gdf)
+        st.session_state["frame_visibility_state"] = visibility_state
 
-    summary_df = summary_df.copy().reset_index(drop=True)
+    summary_df = build_summary_table(result_gdf).reset_index(drop=True)
+    summary_df["Visible"] = visibility_state
 
     st.subheader("Map of selected swaths")
     edited_df = st.data_editor(
@@ -381,9 +382,9 @@ def render_results_panel(result_gdf: gpd.GeoDataFrame, aoi: Optional[gpd.GeoData
             "Look angle": st.column_config.NumberColumn(format="%.2f"),
         },
     )
-    st.session_state["frame_summary_df"] = edited_df
+    st.session_state["frame_visibility_state"] = edited_df["Visible"].fillna(False).astype(bool).tolist()
 
-    visible_mask = edited_df["Visible"].fillna(False).astype(bool)
+    visible_mask = pd.Series(st.session_state["frame_visibility_state"], index=result_gdf.index)
     visible_result_gdf = result_gdf.loc[visible_mask.to_numpy()].copy()
 
     if visible_result_gdf.empty:
@@ -900,12 +901,12 @@ def main_v2() -> None:
         if filtered_frames:
             result_gdf = gpd.GeoDataFrame(pd.concat(filtered_frames, ignore_index=True), crs="EPSG:4326").reset_index(drop=True)
             st.session_state["frame_result_gdf"] = result_gdf
-            st.session_state["frame_summary_df"] = build_summary_table(result_gdf)
+            st.session_state["frame_visibility_state"] = [True] * len(result_gdf)
             st.session_state["frame_filter_range"] = f"{start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}"
             st.session_state.pop("no_results_message", None)
         else:
             st.session_state.pop("frame_result_gdf", None)
-            st.session_state.pop("frame_summary_df", None)
+            st.session_state.pop("frame_visibility_state", None)
             selected_range = f"{start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}"
             overlap_notes: List[str] = []
             for const, (span_start, span_end) in const_spans.items():
@@ -921,7 +922,7 @@ def main_v2() -> None:
             else:
                 st.session_state["no_results_message"] = f"No swaths match the selected filters for {selected_range}."
 
-    if "frame_result_gdf" in st.session_state and "frame_summary_df" in st.session_state:
+    if "frame_result_gdf" in st.session_state:
         render_results_panel(st.session_state["frame_result_gdf"], aoi, show_aoi)
     else:
         no_results_message = st.session_state.pop("no_results_message", None)
