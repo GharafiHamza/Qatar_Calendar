@@ -44,6 +44,7 @@ example for use elsewhere.
 
 import os
 import base64
+import sqlite3
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -117,8 +118,11 @@ def load_constellations_data(base_dir: str) -> Dict[str, gpd.GeoDataFrame]:
     gpkg_path = os.path.join(base_dir, "qatar_calendar.gpkg")
     if os.path.exists(gpkg_path):
         try:
-            layers_df = gpd.list_layers(gpkg_path)
-            layer_names = layers_df["name"].tolist() if "name" in layers_df.columns else list(layers_df)
+            with sqlite3.connect(gpkg_path) as conn:
+                rows = conn.execute(
+                    "SELECT table_name FROM gpkg_contents WHERE data_type = 'features' ORDER BY table_name"
+                ).fetchall()
+            layer_names = [row[0] for row in rows]
         except Exception as exc:
             st.warning(f"Failed to inspect {gpkg_path}: {exc}")
             layer_names = []
