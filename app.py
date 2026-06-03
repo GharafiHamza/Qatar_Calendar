@@ -771,12 +771,24 @@ def main_v2() -> None:
             st.error("One or more required libraries are missing. Please install geopandas, shapely and pydeck to run this app.")
             return
 
+        has_any_selection = any(
+            sat_list or sens_list for sat_list, sens_list in selection.values()
+        )
+        if not has_any_selection:
+            st.warning("no satellite/sensor was selected")
+            st.session_state.pop("frame_result_gdf", None)
+            st.session_state.pop("frame_summary_df", None)
+            st.session_state["no_results_message"] = "no satellite/sensor was selected"
+            return
+
         filtered_frames: List[gpd.GeoDataFrame] = []
         for const, (sat_list, sens_list) in selection.items():
             gdf = const_data.get(const)
             if gdf is None or gdf.empty:
                 continue
             df = gdf.copy()
+            if not sat_list and not sens_list:
+                continue
             if sat_list and "sat" in df.columns:
                 df = df[df["sat"].isin(sat_list)]
             if sens_list and "sensor" in df.columns:
