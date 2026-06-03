@@ -502,7 +502,7 @@ def inject_brand_styles() -> None:
             border-color: rgba(48, 213, 255, 0.12);
         }
 
-        footer, header, #MainMenu {
+        footer, #MainMenu {
             visibility: hidden;
         }
         </style>
