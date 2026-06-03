@@ -357,6 +357,93 @@ def build_summary_table(result_gdf: gpd.GeoDataFrame) -> pd.DataFrame:
     return table
 
 
+@st.fragment
+def render_results_panel(result_gdf: gpd.GeoDataFrame, aoi: Optional[gpd.GeoDataFrame], show_aoi: bool) -> None:
+    """Render the interactive results area without rerunning the whole page."""
+    summary_df = st.session_state.get("frame_summary_df")
+    if summary_df is None:
+        summary_df = build_summary_table(result_gdf)
+        st.session_state["frame_summary_df"] = summary_df
+
+    summary_df = summary_df.copy().reset_index(drop=True)
+
+    st.subheader("Map of selected swaths")
+    edited_df = st.data_editor(
+        summary_df,
+        key="frame_visibility_editor_v2",
+        hide_index=True,
+        use_container_width=True,
+        column_order=["Visible", "Satellite", "Sensor", "Constellation", "Date", "Area covered", "Frame start", "Frame end", "Orbit", "Look angle"],
+        disabled=["Satellite", "Sensor", "Constellation", "Date", "Area covered", "Frame start", "Frame end", "Orbit", "Look angle"],
+        column_config={
+            "Visible": st.column_config.CheckboxColumn("Show/Hide", help="Uncheck to hide this frame on the map", default=True),
+            "Area covered": st.column_config.NumberColumn(format="%.2f"),
+            "Look angle": st.column_config.NumberColumn(format="%.2f"),
+        },
+    )
+    st.session_state["frame_summary_df"] = edited_df
+
+    visible_mask = edited_df["Visible"].fillna(False).astype(bool)
+    visible_result_gdf = result_gdf.loc[visible_mask.to_numpy()].copy()
+
+    if visible_result_gdf.empty:
+        st.warning("All frames are hidden. Re-enable a row to show it on the map.")
+    else:
+        frames_gdf = visible_result_gdf.copy()
+        area_col: Optional[str] = None
+        for col in frames_gdf.columns:
+            lc = col.lower()
+            if "area" in lc and "cover" in lc:
+                area_col = col
+                break
+        if area_col:
+            area_series = pd.to_numeric(frames_gdf[area_col], errors="coerce")
+            frames_gdf = frames_gdf[area_series.notna() & (area_series > 0)].copy()
+
+        coverage_message = ""
+        if aoi is not None and not aoi.empty and not frames_gdf.empty:
+            try:
+                swath_union = unary_union(frames_gdf.geometry)
+                aoi_union = unary_union(aoi.geometry)
+                intersection = swath_union.intersection(aoi_union)
+                result_area_gdf = gpd.GeoSeries([intersection], crs="EPSG:4326").to_crs("EPSG:3857")
+                aoi_area_gdf = gpd.GeoSeries([aoi_union], crs="EPSG:4326").to_crs("EPSG:3857")
+                covered_area = result_area_gdf.area.iloc[0] / 1e6
+                total_area = aoi_area_gdf.area.iloc[0] / 1e6
+                coverage_percent = (covered_area / total_area) * 100 if total_area > 0 else 0
+                coverage_message = f"Coverage of AOI: {coverage_percent:.1f}% (covered {covered_area:.1f} km?? out of {total_area:.1f} km??)"
+            except Exception as exc:
+                coverage_message = f"Unable to compute coverage: {exc}"
+
+        layers = build_map_layers(frames_gdf, aoi, show_aoi)
+        if not frames_gdf.empty:
+            bounds = frames_gdf.total_bounds
+        elif aoi is not None and not aoi.empty:
+            bounds = aoi.total_bounds
+        else:
+            bounds = [-10, -10, 10, 10]
+        minx, miny, maxx, maxy = bounds
+        mid_lat = (miny + maxy) / 2
+        mid_lon = (minx + maxx) / 2
+        view_state = pdk.ViewState(latitude=mid_lat, longitude=mid_lon, zoom=6, bearing=0, pitch=0)
+        deck = pdk.Deck(
+            layers=layers,
+            initial_view_state=view_state,
+            tooltip={"text": "{constellation}\\nSatellite: {sat}\\nSensor: {sensor}"},
+        )
+        st.pydeck_chart(deck)
+
+        if coverage_message:
+            st.subheader("Coverage statistic")
+            st.write(coverage_message)
+
+    st.subheader("Details of selected swaths")
+    st.caption("Toggle the checkbox to hide or show a frame on the map.")
+    if st.checkbox("Show full table", value=False, key="show_full_table_v2"):
+        with st.expander("Full table", expanded=True):
+            st.dataframe(result_gdf.drop(columns="geometry"), use_container_width=True, hide_index=True)
+
+
 def build_map_layers(selected_gdf: gpd.GeoDataFrame, aoi: Optional[gpd.GeoDataFrame], show_aoi: bool) -> List[pdk.Layer]:
     """Create PyDeck layers for the map.
 
@@ -835,84 +922,7 @@ def main_v2() -> None:
                 st.session_state["no_results_message"] = f"No swaths match the selected filters for {selected_range}."
 
     if "frame_result_gdf" in st.session_state and "frame_summary_df" in st.session_state:
-        result_gdf = st.session_state["frame_result_gdf"]
-        summary_df = st.session_state["frame_summary_df"].copy().reset_index(drop=True)
-
-        st.subheader("Map of selected swaths")
-        edited_df = st.data_editor(
-            summary_df,
-            key="frame_visibility_editor_v2",
-            hide_index=True,
-            use_container_width=True,
-            column_order=["Visible", "Satellite", "Sensor", "Constellation", "Date", "Area covered", "Frame start", "Frame end", "Orbit", "Look angle"],
-            disabled=["Satellite", "Sensor", "Constellation", "Date", "Area covered", "Frame start", "Frame end", "Orbit", "Look angle"],
-            column_config={
-                "Visible": st.column_config.CheckboxColumn("Show/Hide", help="Uncheck to hide this frame on the map", default=True),
-                "Area covered": st.column_config.NumberColumn(format="%.2f"),
-                "Look angle": st.column_config.NumberColumn(format="%.2f"),
-            },
-        )
-        st.session_state["frame_summary_df"] = edited_df
-
-        visible_mask = edited_df["Visible"].fillna(False).astype(bool)
-        visible_result_gdf = result_gdf.loc[visible_mask.to_numpy()].copy()
-
-        if visible_result_gdf.empty:
-            st.warning("All frames are hidden. Re-enable a row to show it on the map.")
-        else:
-            frames_gdf = visible_result_gdf.copy()
-            area_col: Optional[str] = None
-            for col in frames_gdf.columns:
-                lc = col.lower()
-                if "area" in lc and "cover" in lc:
-                    area_col = col
-                    break
-            if area_col:
-                area_series = pd.to_numeric(frames_gdf[area_col], errors="coerce")
-                frames_gdf = frames_gdf[area_series.notna() & (area_series > 0)].copy()
-
-            coverage_message = ""
-            if aoi is not None and not aoi.empty and not frames_gdf.empty:
-                try:
-                    swath_union = unary_union(frames_gdf.geometry)
-                    aoi_union = unary_union(aoi.geometry)
-                    intersection = swath_union.intersection(aoi_union)
-                    result_area_gdf = gpd.GeoSeries([intersection], crs="EPSG:4326").to_crs("EPSG:3857")
-                    aoi_area_gdf = gpd.GeoSeries([aoi_union], crs="EPSG:4326").to_crs("EPSG:3857")
-                    covered_area = result_area_gdf.area.iloc[0] / 1e6
-                    total_area = aoi_area_gdf.area.iloc[0] / 1e6
-                    coverage_percent = (covered_area / total_area) * 100 if total_area > 0 else 0
-                    coverage_message = f"Coverage of AOI: {coverage_percent:.1f}% (covered {covered_area:.1f} km?? out of {total_area:.1f} km??)"
-                except Exception as exc:
-                    coverage_message = f"Unable to compute coverage: {exc}"
-
-            layers = build_map_layers(frames_gdf, aoi, show_aoi)
-            if not frames_gdf.empty:
-                bounds = frames_gdf.total_bounds
-            elif aoi is not None and not aoi.empty:
-                bounds = aoi.total_bounds
-            else:
-                bounds = [-10, -10, 10, 10]
-            minx, miny, maxx, maxy = bounds
-            mid_lat = (miny + maxy) / 2
-            mid_lon = (minx + maxx) / 2
-            view_state = pdk.ViewState(latitude=mid_lat, longitude=mid_lon, zoom=6, bearing=0, pitch=0)
-            deck = pdk.Deck(
-                layers=layers,
-                initial_view_state=view_state,
-                tooltip={"text": "{constellation}\\nSatellite: {sat}\\nSensor: {sensor}"},
-            )
-            st.pydeck_chart(deck)
-
-            if coverage_message:
-                st.subheader("Coverage statistic")
-                st.write(coverage_message)
-
-        st.subheader("Details of selected swaths")
-        st.caption("Toggle the checkbox to hide or show a frame on the map.")
-        if st.checkbox("Show full table", value=False, key="show_full_table_v2"):
-            with st.expander("Full table", expanded=True):
-                st.dataframe(result_gdf.drop(columns="geometry"), use_container_width=True, hide_index=True)
+        render_results_panel(st.session_state["frame_result_gdf"], aoi, show_aoi)
     else:
         no_results_message = st.session_state.pop("no_results_message", None)
         if no_results_message:
