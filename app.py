@@ -389,6 +389,15 @@ def inject_brand_styles() -> None:
             border-right: 1px solid rgba(48, 213, 255, 0.18);
         }
 
+        header[data-testid="stHeader"] {
+            background: transparent;
+            height: 0.1rem;
+        }
+
+        header[data-testid="stHeader"] div {
+            background: transparent;
+        }
+
         [data-testid="stSidebar"] h1,
         [data-testid="stSidebar"] h2,
         [data-testid="stSidebar"] h3,
@@ -502,7 +511,7 @@ def inject_brand_styles() -> None:
             border-color: rgba(48, 213, 255, 0.12);
         }
 
-        footer, header, #MainMenu {
+        footer, #MainMenu {
             visibility: hidden;
         }
         </style>
