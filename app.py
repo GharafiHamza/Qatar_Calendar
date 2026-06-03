@@ -453,11 +453,10 @@ def main() -> None:
             gdf = const_data.get(const)
             if gdf is None or gdf.empty:
                 continue
-            # If neither satellites nor sensors were selected, skip this constellation.
-            if not sat_list and not sens_list:
-                continue
             df = gdf.copy()
-            # Filter by unified 'sat' and 'sensor' columns if they exist
+            # Filter by unified 'sat' and 'sensor' columns only when the user
+            # has made an explicit selection. If nothing is selected, include
+            # all rows from the constellation so date-only filtering still works.
             if sat_list and "sat" in df.columns:
                 df = df[df["sat"].isin(sat_list)]
             if sens_list and "sensor" in df.columns:
