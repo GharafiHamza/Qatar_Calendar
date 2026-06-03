@@ -769,6 +769,8 @@ def main_v2() -> None:
     )
     show_aoi = st.sidebar.checkbox("Show AOI boundary", value=True)
     apply = st.sidebar.button("Apply filters", disabled=not has_any_selection)
+    if not has_any_selection:
+        st.sidebar.caption("Select at least one satellite or sensor to enable filtering.")
 
     if apply:
         if gpd is None or unary_union is None or pdk is None:
