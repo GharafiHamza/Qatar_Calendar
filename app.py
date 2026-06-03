@@ -244,6 +244,20 @@ def parse_date_column(df: gpd.GeoDataFrame, col: str) -> pd.Series:
         return pd.to_datetime(pd.Series([None] * len(df)), errors="coerce")
 
 
+def get_data_date_span(df: gpd.GeoDataFrame) -> Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
+    """Return the min/max acquisition dates found in a GeoDataFrame."""
+    date_col = infer_acquisition_date_column(list(df.columns))
+    if date_col is None:
+        date_col = infer_column_name(list(df.columns), ["date", "acq", "start", "time"])
+    if date_col is None:
+        return None, None
+    dates = parse_date_column(df, date_col)
+    valid_dates = dates.dropna()
+    if valid_dates.empty:
+        return None, None
+    return valid_dates.min(), valid_dates.max()
+
+
 def build_map_layers(selected_gdf: gpd.GeoDataFrame, aoi: Optional[gpd.GeoDataFrame], show_aoi: bool) -> List[pdk.Layer]:
     """Create PyDeck layers for the map.
 
@@ -378,6 +392,9 @@ def main() -> None:
     aoi_path = os.path.join(base_dir, "Qatar_eez.kml")
     aoi = load_aoi(aoi_path)
     const_data = load_constellations_data(base_dir)
+    const_spans: Dict[str, Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]] = {
+        const: get_data_date_span(gdf) for const, gdf in const_data.items()
+    }
 
     # Define the date limits for the application. The dataset now spans the
     # full year from 2026-02-01 through 2027-01-31.
@@ -390,6 +407,11 @@ def main() -> None:
 
     for const, gdf in const_data.items():
         with st.sidebar.expander(const, expanded=False):
+            span_start, span_end = const_spans.get(const, (None, None))
+            if span_start is not None and span_end is not None:
+                st.caption(f"Available dates: {span_start.date()} to {span_end.date()}")
+            else:
+                st.caption("Available dates: unavailable")
             # Pull the unified 'sat' and 'sensor' columns created when loading the
             # constellation data.  Fallback to empty lists if columns are not present.
             sat_values: List[str] = sorted(gdf["sat"].dropna().unique().tolist()) if "sat" in gdf.columns else []
@@ -548,7 +570,23 @@ def main() -> None:
                 st.subheader("Coverage statistic")
                 st.write(coverage_message)
         else:
-            st.warning("No swaths match the selected filters.")
+            selected_range = f"{start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}"
+            overlap_notes: List[str] = []
+            for const, (span_start, span_end) in const_spans.items():
+                if span_start is None or span_end is None:
+                    continue
+                if span_end < pd.Timestamp(start_date) or span_start > pd.Timestamp(end_date):
+                    overlap_notes.append(
+                        f"{const}: available {span_start.date()} to {span_end.date()}"
+                    )
+            if overlap_notes:
+                st.warning(
+                    f"No swaths match the selected filters for {selected_range}. "
+                    f"Some loaded constellations do not overlap that window: "
+                    + "; ".join(overlap_notes[:4])
+                )
+            else:
+                st.warning(f"No swaths match the selected filters for {selected_range}.")
 
 
 if __name__ == "__main__":
