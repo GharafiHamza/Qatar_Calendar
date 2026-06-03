@@ -200,6 +200,28 @@ def infer_column_name(columns: List[str], keywords: List[str]) -> Optional[str]:
     return None
 
 
+def infer_acquisition_date_column(columns: List[str]) -> Optional[str]:
+    """Return the most likely acquisition date column.
+
+    Many of the shapefiles contain fields such as ``MLST_Start`` that include
+    the word "start" but do not store the acquisition date itself.  Prefer
+    explicit date-like fields first so date filtering uses the correct column.
+    """
+    lower_map = {col.lower(): col for col in columns}
+    preferred_exact = ["date", "acq_date", "acqdate"]
+    for key in preferred_exact:
+        if key in lower_map:
+            return lower_map[key]
+
+    preferred_contains = ["_date", " date", "date_", "acq"]
+    for key in preferred_contains:
+        for col in columns:
+            if key in col.lower():
+                return col
+
+    return None
+
+
 def parse_date_column(df: gpd.GeoDataFrame, col: str) -> pd.Series:
     """Attempt to parse a date or datetime column into pandas Timestamps.
 
@@ -443,7 +465,9 @@ def main() -> None:
             if df.empty:
                 continue
             # Identify a date column by searching for keywords
-            date_col = infer_column_name(list(df.columns), ["date", "start", "time", "acq"])
+            date_col = infer_acquisition_date_column(list(df.columns))
+            if date_col is None:
+                date_col = infer_column_name(list(df.columns), ["date", "acq", "start", "time"])
             if date_col:
                 dates = parse_date_column(df, date_col)
                 df["__acq_datetime__"] = dates
