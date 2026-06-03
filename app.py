@@ -307,6 +307,56 @@ def get_data_date_span(df: gpd.GeoDataFrame) -> Tuple[Optional[pd.Timestamp], Op
     return valid_dates.min(), valid_dates.max()
 
 
+def format_time_only(value: object) -> str:
+    """Format a timestamp-like value as HH:MM:SS when possible."""
+    if value is None or value == "":
+        return ""
+    ts = pd.to_datetime(value, errors="coerce")
+    if pd.isna(ts):
+        return str(value)
+    return ts.strftime("%H:%M:%S")
+
+
+def build_summary_table(result_gdf: gpd.GeoDataFrame) -> pd.DataFrame:
+    """Build the compact editable summary table shown under the map."""
+    table = pd.DataFrame(index=range(len(result_gdf)))
+    table["Visible"] = True
+    table["Satellite"] = result_gdf["sat"] if "sat" in result_gdf.columns else ""
+    table["Sensor"] = result_gdf["sensor"] if "sensor" in result_gdf.columns else ""
+    table["Constellation"] = (
+        result_gdf["constellation"]
+        if "constellation" in result_gdf.columns
+        else (result_gdf["Constellat"] if "Constellat" in result_gdf.columns else "")
+    )
+
+    if "Date" in result_gdf.columns:
+        table["Date"] = pd.to_datetime(result_gdf["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    else:
+        table["Date"] = ""
+
+    if "AreaCovere" in result_gdf.columns:
+        table["Area covered"] = pd.to_numeric(result_gdf["AreaCovere"], errors="coerce")
+    else:
+        table["Area covered"] = pd.NA
+
+    if "Start" in result_gdf.columns:
+        table["Frame start"] = result_gdf["Start"].apply(format_time_only)
+    else:
+        table["Frame start"] = ""
+
+    if "End" in result_gdf.columns:
+        table["Frame end"] = result_gdf["End"].apply(format_time_only)
+    else:
+        table["Frame end"] = ""
+
+    table["Orbit"] = result_gdf["Orbit"] if "Orbit" in result_gdf.columns else ""
+    if "LookAngle" in result_gdf.columns:
+        table["Look angle"] = pd.to_numeric(result_gdf["LookAngle"], errors="coerce")
+    else:
+        table["Look angle"] = pd.NA
+    return table
+
+
 def build_map_layers(selected_gdf: gpd.GeoDataFrame, aoi: Optional[gpd.GeoDataFrame], show_aoi: bool) -> List[pdk.Layer]:
     """Create PyDeck layers for the map.
 
@@ -638,5 +688,221 @@ def main() -> None:
                 st.warning(f"No swaths match the selected filters for {selected_range}.")
 
 
+
+def main_v2() -> None:
+    """Updated entry point with a compact editable summary table."""
+    st.set_page_config(page_title="Acquisition Plans Viewer", layout="wide")
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    logo_path = os.path.join(script_dir, "ats_logo.png")
+    if os.path.exists(logo_path):
+        with open(logo_path, "rb") as logo_file:
+            logo_bytes = logo_file.read()
+        logo_b64 = base64.b64encode(logo_bytes).decode("utf-8")
+        logo_html = (
+            f'<a href="https://www.ariastechsolutions.com/" target="_blank">'
+            f'<img src="data:image/png;base64,{logo_b64}" '
+            f'alt="Arias Tech Solutions Logo" style="height:80px;" /></a>'
+        )
+        st.markdown(logo_html, unsafe_allow_html=True)
+
+    st.title("Satellite Acquisition Plans over Qatar EEZ")
+
+    base_dir = script_dir
+    aoi = load_aoi(os.path.join(base_dir, "Qatar_eez.kml"))
+    const_data = load_constellations_data(base_dir)
+    const_spans: Dict[str, Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]] = {
+        const: get_data_date_span(gdf) for const, gdf in const_data.items()
+    }
+
+    default_start = datetime(2026, 2, 1)
+    default_end = datetime(2027, 1, 31)
+
+    st.sidebar.header("Constellations and Selection")
+    selection: Dict[str, Tuple[List[str], List[str]]] = {}
+    for const, gdf in const_data.items():
+        with st.sidebar.expander(const, expanded=False):
+            span_start, span_end = const_spans.get(const, (None, None))
+            if span_start is not None and span_end is not None:
+                st.caption(f"Available dates: {span_start.date()} to {span_end.date()}")
+            else:
+                st.caption("Available dates: unavailable")
+
+            sat_values = sorted(gdf["sat"].dropna().unique().tolist()) if "sat" in gdf.columns else []
+            sensor_values = sorted(gdf["sensor"].dropna().unique().tolist()) if "sensor" in gdf.columns else []
+            sat_keys = [f"{const}_sat_{i}" for i in range(len(sat_values))]
+            sensor_keys = [f"{const}_sens_{j}" for j in range(len(sensor_values))]
+            st.checkbox(f"Select all {const}", key=f"{const}_all", on_change=toggle_all_constellation, args=(const, sat_keys + sensor_keys))
+
+            selected_sats: List[str] = []
+            if sat_values:
+                st.markdown("**Satellites**")
+                for i, sat in enumerate(sat_values):
+                    sat_key = sat_keys[i]
+                    if sat_key not in st.session_state:
+                        st.session_state[sat_key] = False
+                    if st.checkbox(sat, key=sat_key):
+                        selected_sats.append(sat)
+
+            selected_sensors: List[str] = []
+            if sensor_values:
+                st.markdown("**Sensors**")
+                for j, sens in enumerate(sensor_values):
+                    sens_key = sensor_keys[j]
+                    if sens_key not in st.session_state:
+                        st.session_state[sens_key] = False
+                    if st.checkbox(sens, key=sens_key):
+                        selected_sensors.append(sens)
+
+            selection[const] = (selected_sats, selected_sensors)
+
+    st.sidebar.header("Date Range")
+    start_date, end_date = st.sidebar.date_input(
+        "Acquisition period",
+        value=(default_start.date(), default_end.date()),
+        min_value=default_start.date(),
+        max_value=default_end.date(),
+    )
+    show_aoi = st.sidebar.checkbox("Show AOI boundary", value=True)
+    apply = st.sidebar.button("Apply filters")
+
+    if apply:
+        if gpd is None or unary_union is None or pdk is None:
+            st.error("One or more required libraries are missing. Please install geopandas, shapely and pydeck to run this app.")
+            return
+
+        filtered_frames: List[gpd.GeoDataFrame] = []
+        for const, (sat_list, sens_list) in selection.items():
+            gdf = const_data.get(const)
+            if gdf is None or gdf.empty:
+                continue
+            df = gdf.copy()
+            if sat_list and "sat" in df.columns:
+                df = df[df["sat"].isin(sat_list)]
+            if sens_list and "sensor" in df.columns:
+                df = df[df["sensor"].isin(sens_list)]
+            if df.empty:
+                continue
+
+            date_col = infer_acquisition_date_column(list(df.columns))
+            if date_col is None:
+                date_col = infer_column_name(list(df.columns), ["date", "acq", "start", "time"])
+            if date_col:
+                df["__acq_datetime__"] = parse_date_column(df, date_col)
+                start_dt = pd.Timestamp(start_date)
+                end_dt = pd.Timestamp(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                df = df.loc[(df["__acq_datetime__"] >= start_dt) & (df["__acq_datetime__"] <= end_dt)]
+            if not df.empty:
+                filtered_frames.append(df)
+
+        if filtered_frames:
+            result_gdf = gpd.GeoDataFrame(pd.concat(filtered_frames, ignore_index=True), crs="EPSG:4326").reset_index(drop=True)
+            st.session_state["frame_result_gdf"] = result_gdf
+            st.session_state["frame_summary_df"] = build_summary_table(result_gdf)
+            st.session_state["frame_filter_range"] = f"{start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}"
+            st.session_state.pop("no_results_message", None)
+        else:
+            st.session_state.pop("frame_result_gdf", None)
+            st.session_state.pop("frame_summary_df", None)
+            selected_range = f"{start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}"
+            overlap_notes: List[str] = []
+            for const, (span_start, span_end) in const_spans.items():
+                if span_start is None or span_end is None:
+                    continue
+                if span_end < pd.Timestamp(start_date) or span_start > pd.Timestamp(end_date):
+                    overlap_notes.append(f"{const}: available {span_start.date()} to {span_end.date()}")
+            if overlap_notes:
+                st.session_state["no_results_message"] = (
+                    f"No swaths match the selected filters for {selected_range}. Some loaded constellations do not overlap that window: "
+                    + "; ".join(overlap_notes[:4])
+                )
+            else:
+                st.session_state["no_results_message"] = f"No swaths match the selected filters for {selected_range}."
+
+    if "frame_result_gdf" in st.session_state and "frame_summary_df" in st.session_state:
+        result_gdf = st.session_state["frame_result_gdf"]
+        summary_df = st.session_state["frame_summary_df"].copy().reset_index(drop=True)
+
+        st.subheader("Map of selected swaths")
+        edited_df = st.data_editor(
+            summary_df,
+            key="frame_visibility_editor_v2",
+            hide_index=True,
+            use_container_width=True,
+            column_order=["Visible", "Satellite", "Sensor", "Constellation", "Date", "Area covered", "Frame start", "Frame end", "Orbit", "Look angle"],
+            disabled=["Satellite", "Sensor", "Constellation", "Date", "Area covered", "Frame start", "Frame end", "Orbit", "Look angle"],
+            column_config={
+                "Visible": st.column_config.CheckboxColumn("Show/Hide", help="Uncheck to hide this frame on the map", default=True),
+                "Area covered": st.column_config.NumberColumn(format="%.2f"),
+                "Look angle": st.column_config.NumberColumn(format="%.2f"),
+            },
+        )
+        st.session_state["frame_summary_df"] = edited_df
+
+        visible_mask = edited_df["Visible"].fillna(False).astype(bool)
+        visible_result_gdf = result_gdf.loc[visible_mask.to_numpy()].copy()
+
+        if visible_result_gdf.empty:
+            st.warning("All frames are hidden. Re-enable a row to show it on the map.")
+        else:
+            frames_gdf = visible_result_gdf.copy()
+            area_col: Optional[str] = None
+            for col in frames_gdf.columns:
+                lc = col.lower()
+                if "area" in lc and "cover" in lc:
+                    area_col = col
+                    break
+            if area_col:
+                area_series = pd.to_numeric(frames_gdf[area_col], errors="coerce")
+                frames_gdf = frames_gdf[area_series.notna() & (area_series > 0)].copy()
+
+            coverage_message = ""
+            if aoi is not None and not aoi.empty and not frames_gdf.empty:
+                try:
+                    swath_union = unary_union(frames_gdf.geometry)
+                    aoi_union = unary_union(aoi.geometry)
+                    intersection = swath_union.intersection(aoi_union)
+                    result_area_gdf = gpd.GeoSeries([intersection], crs="EPSG:4326").to_crs("EPSG:3857")
+                    aoi_area_gdf = gpd.GeoSeries([aoi_union], crs="EPSG:4326").to_crs("EPSG:3857")
+                    covered_area = result_area_gdf.area.iloc[0] / 1e6
+                    total_area = aoi_area_gdf.area.iloc[0] / 1e6
+                    coverage_percent = (covered_area / total_area) * 100 if total_area > 0 else 0
+                    coverage_message = f"Coverage of AOI: {coverage_percent:.1f}% (covered {covered_area:.1f} km?? out of {total_area:.1f} km??)"
+                except Exception as exc:
+                    coverage_message = f"Unable to compute coverage: {exc}"
+
+            layers = build_map_layers(frames_gdf, aoi, show_aoi)
+            if not frames_gdf.empty:
+                bounds = frames_gdf.total_bounds
+            elif aoi is not None and not aoi.empty:
+                bounds = aoi.total_bounds
+            else:
+                bounds = [-10, -10, 10, 10]
+            minx, miny, maxx, maxy = bounds
+            mid_lat = (miny + maxy) / 2
+            mid_lon = (minx + maxx) / 2
+            view_state = pdk.ViewState(latitude=mid_lat, longitude=mid_lon, zoom=6, bearing=0, pitch=0)
+            deck = pdk.Deck(
+                layers=layers,
+                initial_view_state=view_state,
+                tooltip={"text": "{constellation}\\nSatellite: {sat}\\nSensor: {sensor}"},
+            )
+            st.pydeck_chart(deck)
+
+            if coverage_message:
+                st.subheader("Coverage statistic")
+                st.write(coverage_message)
+
+        st.subheader("Details of selected swaths")
+        st.caption("Toggle the checkbox to hide or show a frame on the map.")
+        if st.checkbox("Show full table", value=False, key="show_full_table_v2"):
+            with st.expander("Full table", expanded=True):
+                st.dataframe(result_gdf.drop(columns="geometry"), use_container_width=True, hide_index=True)
+    else:
+        no_results_message = st.session_state.pop("no_results_message", None)
+        if no_results_message:
+            st.warning(no_results_message)
+
+
 if __name__ == "__main__":
-    main()
+    main_v2()
