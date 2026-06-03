@@ -1004,59 +1004,61 @@ def main_v2() -> None:
 
     st.session_state.setdefault("tasking_criteria_open", True)
     selection: Dict[str, Tuple[List[str], List[str]]] = {}
-    with st.sidebar.expander("Tasking Criteria", expanded=st.session_state["tasking_criteria_open"]):
-        st.markdown("**Constellations and Selection**")
-        for const, gdf in const_data.items():
-            with st.expander(const, expanded=False):
-                span_start, span_end = const_spans.get(const, (None, None))
-                if span_start is not None and span_end is not None:
-                    st.caption(f"Available dates: {span_start.date()} to {span_end.date()}")
-                else:
-                    st.caption("Available dates: unavailable")
+    with st.container(border=True):
+        st.markdown("### Tasking Criteria")
+        with st.expander("Open/Close Criteria", expanded=st.session_state["tasking_criteria_open"]):
+            st.markdown("**Constellations and Selection**")
+            for const, gdf in const_data.items():
+                with st.expander(const, expanded=False):
+                    span_start, span_end = const_spans.get(const, (None, None))
+                    if span_start is not None and span_end is not None:
+                        st.caption(f"Available dates: {span_start.date()} to {span_end.date()}")
+                    else:
+                        st.caption("Available dates: unavailable")
 
-                sat_values = sorted(gdf["sat"].dropna().unique().tolist()) if "sat" in gdf.columns else []
-                sensor_values = sorted(gdf["sensor"].dropna().unique().tolist()) if "sensor" in gdf.columns else []
-                sat_keys = [f"{const}_sat_{i}" for i in range(len(sat_values))]
-                sensor_keys = [f"{const}_sens_{j}" for j in range(len(sensor_values))]
-                st.checkbox(f"Select all {const}", key=f"{const}_all", on_change=toggle_all_constellation, args=(const, sat_keys + sensor_keys))
+                    sat_values = sorted(gdf["sat"].dropna().unique().tolist()) if "sat" in gdf.columns else []
+                    sensor_values = sorted(gdf["sensor"].dropna().unique().tolist()) if "sensor" in gdf.columns else []
+                    sat_keys = [f"{const}_sat_{i}" for i in range(len(sat_values))]
+                    sensor_keys = [f"{const}_sens_{j}" for j in range(len(sensor_values))]
+                    st.checkbox(f"Select all {const}", key=f"{const}_all", on_change=toggle_all_constellation, args=(const, sat_keys + sensor_keys))
 
-                selected_sats: List[str] = []
-                if sat_values:
-                    st.markdown("**Satellites**")
-                    for i, sat in enumerate(sat_values):
-                        sat_key = sat_keys[i]
-                        if sat_key not in st.session_state:
-                            st.session_state[sat_key] = False
-                        if st.checkbox(sat, key=sat_key):
-                            selected_sats.append(sat)
+                    selected_sats: List[str] = []
+                    if sat_values:
+                        st.markdown("**Satellites**")
+                        for i, sat in enumerate(sat_values):
+                            sat_key = sat_keys[i]
+                            if sat_key not in st.session_state:
+                                st.session_state[sat_key] = False
+                            if st.checkbox(sat, key=sat_key):
+                                selected_sats.append(sat)
 
-                selected_sensors: List[str] = []
-                if sensor_values:
-                    st.markdown("**Sensors**")
-                    for j, sens in enumerate(sensor_values):
-                        sens_key = sensor_keys[j]
-                        if sens_key not in st.session_state:
-                            st.session_state[sens_key] = False
-                        if st.checkbox(sens, key=sens_key):
-                            selected_sensors.append(sens)
+                    selected_sensors: List[str] = []
+                    if sensor_values:
+                        st.markdown("**Sensors**")
+                        for j, sens in enumerate(sensor_values):
+                            sens_key = sensor_keys[j]
+                            if sens_key not in st.session_state:
+                                st.session_state[sens_key] = False
+                            if st.checkbox(sens, key=sens_key):
+                                selected_sensors.append(sens)
 
-                selection[const] = (selected_sats, selected_sensors)
+                    selection[const] = (selected_sats, selected_sensors)
 
-        has_any_selection = any(
-            sat_list or sens_list for sat_list, sens_list in selection.values()
-        )
+            has_any_selection = any(
+                sat_list or sens_list for sat_list, sens_list in selection.values()
+            )
 
-        st.markdown("**Date Range**")
-        start_date, end_date = st.date_input(
-            "Acquisition period",
-            value=(default_start.date(), default_end.date()),
-            min_value=default_start.date(),
-            max_value=default_end.date(),
-        )
-        show_aoi = st.checkbox("Show AOI boundary", value=True)
-        apply = st.button("Apply filters", disabled=not has_any_selection)
-        if not has_any_selection:
-            st.caption("Select at least one satellite or sensor to enable filtering.")
+            st.markdown("**Date Range**")
+            start_date, end_date = st.date_input(
+                "Acquisition period",
+                value=(default_start.date(), default_end.date()),
+                min_value=default_start.date(),
+                max_value=default_end.date(),
+            )
+            show_aoi = st.checkbox("Show AOI boundary", value=True)
+            apply = st.button("Apply filters", disabled=not has_any_selection)
+            if not has_any_selection:
+                st.caption("Select at least one satellite or sensor to enable filtering.")
 
     if apply:
         if gpd is None or unary_union is None or pdk is None:
