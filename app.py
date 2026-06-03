@@ -367,26 +367,49 @@ def render_results_panel(result_gdf: gpd.GeoDataFrame, aoi: Optional[gpd.GeoData
 
     summary_df = build_summary_table(result_gdf).reset_index(drop=True)
     summary_df["Visible"] = visibility_state
-
-    st.subheader("Map of selected swaths")
-    edited_df = st.data_editor(
-        summary_df,
-        key="frame_visibility_editor_v2",
+    selected_rows: List[int] = []
+    selection_event = st.dataframe(
+        summary_df.drop(columns="Visible"),
+        key="frame_selection_table_v2",
         hide_index=True,
         use_container_width=True,
-        column_order=["Visible", "Satellite", "Sensor", "Constellation", "Date", "Area covered", "Frame start", "Frame end", "Orbit", "Look angle"],
-        disabled=["Satellite", "Sensor", "Constellation", "Date", "Area covered", "Frame start", "Frame end", "Orbit", "Look angle"],
-        column_config={
-            "Visible": st.column_config.CheckboxColumn("Show/Hide", help="Uncheck to hide this frame on the map", default=True),
-            "Area covered": st.column_config.NumberColumn(format="%.2f"),
-            "Look angle": st.column_config.NumberColumn(format="%.2f"),
-        },
+        on_select="rerun",
+        selection_mode="multi-row",
+        height=260,
     )
-    st.session_state["frame_visibility_state"] = edited_df["Visible"].fillna(False).astype(bool).tolist()
+    try:
+        selected_rows = list(selection_event.selection.rows)  # type: ignore[assignment]
+    except Exception:
+        selected_rows = []
+
+    control_cols = st.columns(4)
+    with control_cols[0]:
+        if st.button("Hide selected", key="hide_selected_frames", disabled=not selected_rows):
+            for idx in selected_rows:
+                if 0 <= idx < len(visibility_state):
+                    visibility_state[idx] = False
+            st.session_state["frame_visibility_state"] = visibility_state
+            st.rerun()
+    with control_cols[1]:
+        if st.button("Show selected", key="show_selected_frames", disabled=not selected_rows):
+            for idx in selected_rows:
+                if 0 <= idx < len(visibility_state):
+                    visibility_state[idx] = True
+            st.session_state["frame_visibility_state"] = visibility_state
+            st.rerun()
+    with control_cols[2]:
+        if st.button("Hide all", key="hide_all_frames"):
+            st.session_state["frame_visibility_state"] = [False] * len(result_gdf)
+            st.rerun()
+    with control_cols[3]:
+        if st.button("Show all", key="show_all_frames"):
+            st.session_state["frame_visibility_state"] = [True] * len(result_gdf)
+            st.rerun()
 
     visible_mask = pd.Series(st.session_state["frame_visibility_state"], index=result_gdf.index)
     visible_result_gdf = result_gdf.loc[visible_mask.to_numpy()].copy()
 
+    st.subheader("Map of selected swaths")
     if visible_result_gdf.empty:
         st.warning("All frames are hidden. Re-enable a row to show it on the map.")
     else:
@@ -439,7 +462,7 @@ def render_results_panel(result_gdf: gpd.GeoDataFrame, aoi: Optional[gpd.GeoData
             st.write(coverage_message)
 
     st.subheader("Details of selected swaths")
-    st.caption("Toggle the checkbox to hide or show a frame on the map.")
+    st.caption("Select one or more rows, then use the buttons above to hide or show them.")
     if st.checkbox("Show full table", value=False, key="show_full_table_v2"):
         with st.expander("Full table", expanded=True):
             st.dataframe(result_gdf.drop(columns="geometry"), use_container_width=True, hide_index=True)
