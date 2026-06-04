@@ -159,6 +159,7 @@ def load_constellations_data(base_dir: str) -> Dict[str, gpd.GeoDataFrame]:
                 gdf["sat"] = gdf[sat_orig]
             if sensor_orig:
                 gdf["sensor"] = gdf[sensor_orig]
+            gdf = filter_qatar_eez_frames(gdf)
             const_data[name] = gdf
         if const_data:
             return const_data
@@ -219,6 +220,7 @@ def load_constellations_data(base_dir: str) -> Dict[str, gpd.GeoDataFrame]:
                 gdf["sat"] = gdf[sat_orig]
             if sensor_orig:
                 gdf["sensor"] = gdf[sensor_orig]
+            gdf = filter_qatar_eez_frames(gdf)
             gdfs.append(gdf)
         if gdfs:
             const_data[name] = pd.concat(gdfs, ignore_index=True)
@@ -247,6 +249,36 @@ def infer_column_name(columns: List[str], keywords: List[str]) -> Optional[str]:
                 # return the original column name preserving case
                 return columns[idx]
     return None
+
+
+def filter_qatar_eez_frames(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Keep only frames that belong to the Qatari EEZ and exclude overlap claims.
+
+    The GeoPackage stores region metadata in ``Region`` and ``ParentRegi``.
+    Some rows describe overlapping-claim areas rather than the actual Qatari
+    EEZ. This helper removes those rows before the UI receives the data.
+    """
+    if gdf is None or gdf.empty:
+        return gdf
+
+    region_columns = [col for col in ("Region", "ParentRegi") if col in gdf.columns]
+    if not region_columns:
+        return gdf
+
+    keep_mask = pd.Series(False, index=gdf.index)
+    overlap_mask = pd.Series(False, index=gdf.index)
+
+    for col in region_columns:
+        values = gdf[col].fillna("").astype(str).str.strip().str.casefold()
+        keep_mask |= values.str.contains("qatari exclusive economic zone", na=False)
+        keep_mask |= values.str.contains("qatar eez", na=False)
+        overlap_mask |= values.str.contains("overlapping claim", na=False)
+        overlap_mask |= values.str.contains("qatar / saudi arabia", na=False)
+        overlap_mask |= values.str.contains("saudi arabia / qatar", na=False)
+        overlap_mask |= values.str.contains("united arab emirates", na=False)
+
+    filtered = gdf.loc[keep_mask & ~overlap_mask].copy()
+    return filtered if not filtered.empty else gdf.iloc[0:0].copy()
 
 
 def infer_acquisition_date_column(columns: List[str]) -> Optional[str]:
